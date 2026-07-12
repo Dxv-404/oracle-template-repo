@@ -1,0 +1,15 @@
+# The record repository is the pristine proof-of-work database. It tracks only
+# record content and the governed root files. Nothing else belongs here.
+#
+# The validate workflow installs js-yaml ephemerally in the CI runner with
+# "npm init -y" and "npm install --no-save"; those artifacts must never be
+# committed, and neither must local environment or OS files.
+
+node_modules/
+package.json
+package-lock.json
+.env
+.env.*
+.DS_Store
+Thumbs.db
+*.log

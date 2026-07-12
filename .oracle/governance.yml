@@ -1,0 +1,11 @@
+# Oracle record governance: the per-group approval rule, read from the BASE branch by the validate check.
+# Effective required approvals = (members <= 1) ? 0 : max(1, min(configured, members - 1)), so a solo group
+# self-merges and any joiner forces at least one non-author approval, deadlock-free at every group size.
+approvals:
+  # required NON-AUTHOR approvals for a proposal touching decisions/ or documents/
+  decisions_documents: 2
+  # required NON-AUTHOR approvals for a proposal touching only notes/ or library/
+  notes_library: 1
+# A per-proposal, logged, reversible exception for a genuine absence, applied by a NON-AUTHOR to lower the
+# requirement by one for that one pull request. Disabled on public groups.
+absence_override_label: absence-override

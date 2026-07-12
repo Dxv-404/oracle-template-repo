@@ -1,0 +1,5 @@
+# The record repository is a diff-centric text database. Store every text file
+# with LF line endings so diffs stay clean and match the LF content the
+# application writes through the GitHub API. Git still checks files out with the
+# platform's native endings locally; only the stored blobs are pinned to LF.
+* text=auto eol=lf
