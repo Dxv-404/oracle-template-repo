@@ -1,0 +1,79 @@
+# Record repository CI gate. Destined for the record repo at .github/workflows/validate.yml.
+# A human places this and .github/scripts/validate.mjs in the bootstrap commit; the app never commits here.
+#
+# It reports a commit status with context "validate" on the pull request head SHA. Branch protection or the
+# ruleset requires that "validate" context. Because the check counts pull request approvals, it triggers on
+# pull_request_review as well as pull_request, and it always targets the PR head SHA rather than the event
+# SHA, so it re-runs and updates when a review changes (SPEC.md 8, CLAUDE.md 9.5).
+#
+# The required "validate" context must report once on a real PR head before the ruleset hard-requires it.
+
+name: validate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+# Least privilege. statuses:write to set the commit status; the rest read-only. No write to contents.
+# issues:read lets the validator read the pull request's label events for the absence-override author check
+# (H2). Listing repository collaborators (the membership clamp, C4) uses the same token; for a repo the token
+# owns this succeeds, and if it ever cannot, the validator fails closed to the un-clamped configured rule.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  statuses: write
+
+# One in-flight run per PR; a newer event supersedes an older run so the latest state wins.
+concurrency:
+  group: validate-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # Guard: both triggering events carry a pull_request payload; nothing else should start this job.
+    if: ${{ github.event.pull_request != null }}
+    steps:
+      - name: Resolve PR head and base
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            core.setOutput('number', String(pr.number));
+            core.setOutput('base', pr.base.ref);
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Checkout PR head with full history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 0
+          # Keep the run-scoped GITHUB_TOKEN in git config for the next step. The base fetch below
+          # needs it to authenticate against this private repository; the post-job cleanup removes it.
+          persist-credentials: true
+
+      - name: Fetch the base branch tip into its tracking ref
+        run: git fetch --no-tags --quiet origin "+refs/heads/${{ steps.pr.outputs.base }}:refs/remotes/origin/${{ steps.pr.outputs.base }}"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install js-yaml (pinned)
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save --no-audit --no-fund js-yaml@4.1.0
+
+      - name: Run the validator
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          BASE_REF: ${{ steps.pr.outputs.base }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: node .github/scripts/validate.mjs
