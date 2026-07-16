@@ -1,0 +1,64 @@
+# The navigator index robot (Phase B automation). Shipped into each GROUP's record repository, where it keeps that
+# group's semantic search fresh on its own: it runs in the group's OWN CI, on the repo's OWN GITHUB_TOKEN, with no
+# operator machine, no personal token, and no dependency on any other account.
+#
+# It runs after every accepted change (a push to the default branch, which the gate only allows via a merged pull
+# request), re-embeds the record LOCALLY in the runner (the record is never sent to a third party), and writes only
+# the derived int8 vectors to this repo's own private oracle-meta branch. Nothing on the default branch is touched,
+# and writing to oracle-meta does not re-trigger this workflow, so it cannot loop.
+#
+# Install path: .github/workflows/navigator-index.yml, alongside .oracle/ci/oracle-index.mjs and
+# .oracle/ci/package.json. Adding it to a group is itself a governed change (a pull request through the gate).
+
+name: Navigator index
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+# Only the ability to write this repo's own oracle-meta branch. No secrets are needed or used.
+permissions:
+  contents: write
+
+# One rebuild at a time per repo; a newer merge supersedes an in-flight run rather than racing it to the branch.
+concurrency:
+  group: navigator-index
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The robot itself is NOT in this public template: it is the app's real indexing code, so it is committed
+    # privately into each group's own repo instead. This workflow therefore no-ops wherever the robot is absent,
+    # which is exactly two cases: the template repository itself, and the instant between a group being generated
+    # and provisioning shipping the bundle. Without this guard both would show a failed run for no reason.
+    if: hashFiles('.oracle/ci/oracle-index.mjs') != ''
+    steps:
+      # fetch-depth: 0 is REQUIRED: the app keys the index on the default branch's commit count, so a shallow
+      # checkout would miscount and publish an index the app never asks for. The robot fails loudly in that case.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The embedding model library, pinned in .oracle/ci/package.json. Cached between runs by the model cache below.
+      - name: Install the embedder
+        working-directory: .oracle/ci
+        run: npm install --no-audit --no-fund
+
+      # The model weights are ~34MB and identical every run; cache them so a rebuild is fast after the first.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: .oracle/ci/node_modules/@huggingface/transformers/.cache
+          key: navigator-model-${{ runner.os }}-v1
+
+      - name: Rebuild the index
+        run: node .oracle/ci/oracle-index.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
