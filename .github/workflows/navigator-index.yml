@@ -30,11 +30,6 @@ jobs:
   rebuild:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # The robot itself is NOT in this public template: it is the app's real indexing code, so it is committed
-    # privately into each group's own repo instead. This workflow therefore no-ops wherever the robot is absent,
-    # which is exactly two cases: the template repository itself, and the instant between a group being generated
-    # and provisioning shipping the bundle. Without this guard both would show a failed run for no reason.
-    if: hashFiles('.oracle/ci/oracle-index.mjs') != ''
     steps:
       # fetch-depth: 0 is REQUIRED: the app keys the index on the default branch's commit count, so a shallow
       # checkout would miscount and publish an index the app never asks for. The robot fails loudly in that case.
@@ -42,23 +37,46 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The robot itself is NOT in this public template: it is the app's real indexing code, kept private and
+      # committed straight into each group's own repo instead. So this workflow must no-op wherever the robot is
+      # absent, which is exactly two cases: this template repository itself, and the moment between a group being
+      # generated and provisioning shipping the bundle. Both would otherwise report a failed run for no reason.
+      #
+      # The guard has to live HERE, at step level, and not on the job. GitHub evaluates a job's `if` before any
+      # runner exists, so `hashFiles` is unavailable there (contexts allowed on jobs.<id>.if are only github,
+      # needs, vars, and inputs) and using it is a startup failure that kills the whole workflow. Learned the hard
+      # way: the job-level form was rejected outright by GitHub.
+      - name: Look for the index robot
+        id: robot
+        run: |
+          if [ -f .oracle/ci/oracle-index.mjs ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No index robot is installed in this repository, so there is nothing to rebuild." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.robot.outputs.present == 'true'
         with:
           node-version: 20
 
       # The embedding model library, pinned in .oracle/ci/package.json. Cached between runs by the model cache below.
       - name: Install the embedder
+        if: steps.robot.outputs.present == 'true'
         working-directory: .oracle/ci
         run: npm install --no-audit --no-fund
 
       # The model weights are ~34MB and identical every run; cache them so a rebuild is fast after the first.
       - name: Cache the embedding model
+        if: steps.robot.outputs.present == 'true'
         uses: actions/cache@v4
         with:
           path: .oracle/ci/node_modules/@huggingface/transformers/.cache
           key: navigator-model-${{ runner.os }}-v1
 
       - name: Rebuild the index
+        if: steps.robot.outputs.present == 'true'
         run: node .oracle/ci/oracle-index.mjs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
