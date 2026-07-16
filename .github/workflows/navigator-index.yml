@@ -38,22 +38,27 @@ jobs:
           fetch-depth: 0
 
       # The robot itself is NOT in this public template: it is the app's real indexing code, kept private and
-      # committed straight into each group's own repo instead. So this workflow must no-op wherever the robot is
-      # absent, which is exactly two cases: this template repository itself, and the moment between a group being
-      # generated and provisioning shipping the bundle. Both would otherwise report a failed run for no reason.
+      # committed into each group's own repo. And it lives on the group's oracle-meta branch, NOT the default
+      # branch, so the record's history stays only record content. The record to index is on the checked-out
+      # default branch; the robot is fetched from oracle-meta into the working tree here.
       #
-      # The guard has to live HERE, at step level, and not on the job. GitHub evaluates a job's `if` before any
-      # runner exists, so `hashFiles` is unavailable there (contexts allowed on jobs.<id>.if are only github,
-      # needs, vars, and inputs) and using it is a startup failure that kills the whole workflow. Learned the hard
-      # way: the job-level form was rejected outright by GitHub.
-      - name: Look for the index robot
+      # So this step also serves as the guard: it no-ops wherever the robot is absent, which is exactly two cases,
+      # this template repository itself and the moment between a group being generated and provisioning shipping the
+      # bundle. Both would otherwise report a failed run for no reason. The guard MUST be at step level, not on the
+      # job: GitHub evaluates a job's `if` before any runner exists, so hashFiles/git are unavailable there and a
+      # job-level guard is a startup failure that kills the whole workflow (learned the hard way).
+      - name: Fetch the index robot from oracle-meta
         id: robot
         run: |
-          if [ -f .oracle/ci/oracle-index.mjs ]; then
+          if git fetch origin oracle-meta 2>/dev/null \
+             && git cat-file -e origin/oracle-meta:.oracle/ci/oracle-index.mjs 2>/dev/null; then
+            mkdir -p .oracle/ci
+            git show origin/oracle-meta:.oracle/ci/oracle-index.mjs > .oracle/ci/oracle-index.mjs
+            git show origin/oracle-meta:.oracle/ci/package.json > .oracle/ci/package.json
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "No index robot is installed in this repository, so there is nothing to rebuild." >> "$GITHUB_STEP_SUMMARY"
+            echo "No index robot on oracle-meta, so there is nothing to rebuild." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - uses: actions/setup-node@v4
